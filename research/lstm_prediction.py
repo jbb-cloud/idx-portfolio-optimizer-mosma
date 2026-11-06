@@ -10,9 +10,11 @@ Fixes compared with the internship version:
   A MAPE is meaningless without this baseline: on daily prices the naive
   model already reaches a MAPE close to the average absolute daily return.
 
-Run:  python research/lstm_prediction.py
+Run:  python research/lstm_prediction.py          (add --save to write docs/figures/result_lstm_vs_naive.png)
 """
+import os
 import random
+import sys
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -34,6 +36,10 @@ RECURSIVE_DAYS = 7   # recursive (autoregressive) horizon
 random.seed(SEED)
 np.random.seed(SEED)
 tf.random.set_seed(SEED)
+# Without this, multithreaded CPU kernels still make two runs differ slightly
+# (the 1-day MAPE moved between ~2.4 % and ~3.0 % across runs; the naive
+# baseline, 1.8 %, does not change).
+tf.config.experimental.enable_op_determinism()
 
 ASSETS = ["ADRO.JK", "AKRA.JK", "AMRT.JK", "ANTM.JK", "ARTO.JK", "ASII.JK",
           "BBCA.JK", "BBNI.JK", "BBRI.JK", "BMRI.JK", "BRPT.JK", "BUMI.JK",
@@ -140,20 +146,47 @@ def main():
     print(f"Recursive {RECURSIVE_DAYS}-day path – MAPE LSTM {mape(real_rec, np.array(rec)):.2f}% | "
           f"naive (flat) {mape(real_rec, naive_rec):.2f}%  (only {RECURSIVE_DAYS} points: not significant)")
 
+    m_rec_lstm, m_rec_naive = mape(real_rec, np.array(rec)), mape(real_rec, naive_rec)
     dates = data.index
-    fig, (a1, a2) = plt.subplots(2, 1, figsize=(12, 8))
-    a1.plot(dates[-EVAL_DAYS:], real, label="Real", color="blue", marker=".")
-    a1.plot(dates[-EVAL_DAYS:], lstm_price, label=f"LSTM (MAPE {m_lstm:.2f}%)", color="red", marker=".")
-    a1.plot(dates[-EVAL_DAYS:], prev, label=f"Naive (MAPE {m_naive:.2f}%)", color="grey", ls="--")
-    a1.set_title(f"{TARGET}: 1-day-ahead prediction")
-    a1.legend(); a1.grid(alpha=0.3)
-    a2.plot(dates[-RECURSIVE_DAYS:], real_rec, label="Real", color="blue", marker=".")
-    a2.plot(dates[-RECURSIVE_DAYS:], rec, label="LSTM recursive", color="red", marker=".")
-    a2.plot(dates[-RECURSIVE_DAYS:], naive_rec, label="Naive (flat)", color="grey", ls="--")
-    a2.set_title(f"{TARGET}: recursive {RECURSIVE_DAYS}-day prediction")
-    a2.legend(); a2.grid(alpha=0.3)
-    plt.tight_layout()
-    plt.show()
+    SURFACE, INK, MUTED, GRID = "#fcfcfb", "#0b0b0b", "#52514e", "#e6e5e1"
+    BLUE, ORANGE, AQUA = "#2a78d6", "#eb6834", "#1baf7a"
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(12, 4.8), facecolor=SURFACE,
+                                 gridspec_kw={"width_ratios": [2.2, 1]})
+    for ax in (a1, a2):
+        ax.set_facecolor(SURFACE)
+        for side in ("top", "right"):
+            ax.spines[side].set_visible(False)
+        for side in ("left", "bottom"):
+            ax.spines[side].set_color(GRID)
+        ax.tick_params(colors=MUTED, labelsize=9)
+        ax.grid(axis="y", color=GRID, linewidth=0.8)
+        ax.set_axisbelow(True)
+    d = dates[-EVAL_DAYS:]
+    a1.plot(d, real, color=BLUE, lw=2, label="Prix réel")
+    a1.plot(d, lstm_price, color=ORANGE, lw=1.8, label=f"LSTM (MAPE {m_lstm:.2f} %)")
+    a1.plot(d, prev, color=AQUA, lw=1.8, ls="--", label=f"Naïf « demain = aujourd'hui » (MAPE {m_naive:.2f} %)")
+    a1.set_title(f"{TARGET} : prévision à 1 jour, {EVAL_DAYS} derniers jours", color=INK, fontsize=11, loc="left")
+    a1.legend(frameon=False, fontsize=9, labelcolor=INK)
+    a1.tick_params(axis="x", rotation=30)
+    labels = ["1 jour\n(60 j)", f"Récursif\n{RECURSIVE_DAYS} j"]
+    x = np.arange(2)
+    bl = a2.bar(x - 0.19, [m_lstm, m_rec_lstm], 0.36, color=ORANGE, label="LSTM")
+    bn = a2.bar(x + 0.19, [m_naive, m_rec_naive], 0.36, color=AQUA, label="Naïf")
+    for bars in (bl, bn):
+        for b in bars:
+            a2.annotate(f"{b.get_height():.1f} %", (b.get_x() + b.get_width() / 2, b.get_height()),
+                        xytext=(0, 3), textcoords="offset points", ha="center", fontsize=9, color=INK)
+    a2.set_xticks(x, labels)
+    a2.set_ylabel("MAPE (%) – plus bas = mieux", color=MUTED, fontsize=9)
+    a2.set_title("Erreur de prévision", color=INK, fontsize=11, loc="left")
+    a2.legend(frameon=False, fontsize=9, labelcolor=INK)
+    fig.tight_layout()
+    if "--save" in sys.argv:
+        out = os.path.join(os.path.dirname(__file__), "..", "docs", "figures", "result_lstm_vs_naive.png")
+        fig.savefig(out, dpi=160, facecolor=SURFACE)
+        print("saved", out)
+    else:
+        plt.show()
 
 
 if __name__ == "__main__":
